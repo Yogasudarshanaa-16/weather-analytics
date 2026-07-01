@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Australia Weather Analytics</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f172a;
+    --card: #1e293b;
+    --accent: #38bdf8;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 24px;
+  }
+  h1 { margin: 0 0 4px; font-size: 26px; }
+  p.subtitle { color: var(--muted); margin-top: 0; }
+  .controls {
+    display: flex; gap: 12px; align-items: center;
+    margin: 16px 0 24px;
+  }
+  select, button, input {
+    background: var(--card);
+    color: var(--text);
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 14px;
+  }
+  button {
+    background: var(--accent);
+    color: #02131f;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+  }
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 14px;
+    margin-bottom: 28px;
+  }
+  .stat-card {
+    background: var(--card);
+    border-radius: 12px;
+    padding: 16px;
+  }
+  .stat-card .label { color: var(--muted); font-size: 12px; }
+  .stat-card .value { font-size: 22px; font-weight: 700; margin-top: 4px; }
+  .charts-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+  .chart-card {
+    background: var(--card);
+    border-radius: 12px;
+    padding: 16px;
+  }
+  .chart-card h3 { margin-top: 0; font-size: 15px; color: var(--muted); }
+  .predict-card {
+    background: var(--card);
+    border-radius: 12px;
+    padding: 20px;
+    margin-top: 24px;
+  }
+  .predict-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px;
+    margin: 14px 0;
+  }
+  .result {
+    margin-top: 14px;
+    padding: 12px;
+    border-radius: 8px;
+    font-weight: 600;
+  }
+  .result.rain { background: #1e3a5f; color: #7dd3fc; }
+  .result.norain { background: #1e3a2f; color: #86efac; }
+  @media (max-width: 900px) { .charts-grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<h1>🌦 Australia Weather Analytics</h1>
+<p class="subtitle">Exploratory dashboard + ML rain prediction over weatherAUS.csv (145k+ daily records)</p>
+
+<div class="controls">
+  <label>Location:</label>
+  <select id="locationSelect"><option value="">All Locations</option></select>
+  <button onclick="loadAll()">Refresh</button>
+</div>
+
+<div class="stats-grid" id="statsGrid"></div>
+
+<div class="charts-grid">
+  <div class="chart-card">
+    <h3>Average Monthly Rainfall (mm)</h3>
+    <canvas id="rainfallChart"></canvas>
+  </div>
+  <div class="chart-card">
+    <h3>Yearly Temperature Trend (°C)</h3>
+    <canvas id="tempChart"></canvas>
+  </div>
+  <div class="chart-card" style="grid-column: span 2;">
+    <h3>% Rainy Days by Location (Top 15)</h3>
+    <canvas id="locationChart"></canvas>
+  </div>
+</div>
+
+<div class="predict-card">
+  <h3>🔮 Will it rain tomorrow?</h3>
+  <p class="subtitle">Fill in today's conditions and get a model prediction.</p>
+  <div class="predict-grid">
+    <input id="p_MinTemp" placeholder="MinTemp °C" value="14" />
+    <input id="p_MaxTemp" placeholder="MaxTemp °C" value="26" />
+    <input id="p_Rainfall" placeholder="Rainfall mm" value="0" />
+    <input id="p_Humidity3pm" placeholder="Humidity 3pm %" value="50" />
+    <input id="p_Pressure3pm" placeholder="Pressure 3pm" value="1015" />
+    <input id="p_WindGustSpeed" placeholder="WindGustSpeed" value="35" />
+    <select id="p_RainToday">
+      <option value="No">RainToday: No</option>
+      <option value="Yes">RainToday: Yes</option>
+    </select>
+    <select id="p_Location"></select>
+  </div>
+  <button onclick="predict()">Predict</button>
+  <div id="predictResult"></div>
+</div>
+
+<script>
+const API = "http://localhost:5000/api";
+let rainfallChart, tempChart, locationChart;
+
+async function loadLocations() {
+  const res = await fetch(`${API}/locations`);
+  const locs = await res.json();
+  const sel = document.getElementById("locationSelect");
+  const pSel = document.getElementById("p_Location");
+  locs.forEach(l => {
+    sel.innerHTML += `<option value="${l}">${l}</option>`;
+    pSel.innerHTML += `<option value="${l}">${l}</option>`;
+  });
+}
+
+async function loadStats() {
+  const res = await fetch(`${API}/summary`);
+  const d = await res.json();
+  const grid = document.getElementById("statsGrid");
+  grid.innerHTML = `
+    <div class="stat-card"><div class="label">Total Records</div><div class="value">${d.total_records.toLocaleString()}</div></div>
+    <div class="stat-card"><div class="label">Locations</div><div class="value">${d.locations}</div></div>
+    <div class="stat-card"><div class="label">Date Range</div><div class="value" style="font-size:14px">${d.date_range.start} → ${d.date_range.end}</div></div>
+    <div class="stat-card"><div class="label">Rainy Days</div><div class="value">${d.rain_days_pct}%</div></div>
+    <div class="stat-card"><div class="label">Avg Max Temp</div><div class="value">${d.avg_max_temp}°C</div></div>
+    <div class="stat-card"><div class="label">Avg Rainfall</div><div class="value">${d.avg_rainfall_mm}mm</div></div>
+  `;
+}
+
+async function loadRainfall(location) {
+  const res = await fetch(`${API}/monthly-rainfall${location ? "?location="+location : ""}`);
+  const d = await res.json();
+  if (rainfallChart) rainfallChart.destroy();
+  rainfallChart = new Chart(document.getElementById("rainfallChart"), {
+    type: "bar",
+    data: { labels: d.labels, datasets: [{ label: "Avg Rainfall (mm)", data: d.values, backgroundColor: "#38bdf8" }] },
+    options: { plugins: { legend: { display: false } } }
+  });
+}
+
+async function loadTempTrend(location) {
+  const res = await fetch(`${API}/temp-trend${location ? "?location="+location : ""}`);
+  const d = await res.json();
+  if (tempChart) tempChart.destroy();
+  tempChart = new Chart(document.getElementById("tempChart"), {
+    type: "line",
+    data: {
+      labels: d.labels,
+      datasets: [
+        { label: "Max Temp", data: d.max_temp, borderColor: "#f87171", fill: false },
+        { label: "Min Temp", data: d.min_temp, borderColor: "#60a5fa", fill: false }
+      ]
+    }
+  });
+}
+
+async function loadLocationRain() {
+  const res = await fetch(`${API}/rain-by-location`);
+  const d = await res.json();
+  if (locationChart) locationChart.destroy();
+  locationChart = new Chart(document.getElementById("locationChart"), {
+    type: "bar",
+    data: { labels: d.labels, datasets: [{ label: "% Rainy Days", data: d.values, backgroundColor: "#a78bfa" }] },
+    options: { indexAxis: "y", plugins: { legend: { display: false } } }
+  });
+}
+
+async function predict() {
+  const body = {
+    MinTemp: document.getElementById("p_MinTemp").value,
+    MaxTemp: document.getElementById("p_MaxTemp").value,
+    Rainfall: document.getElementById("p_Rainfall").value,
+    Humidity3pm: document.getElementById("p_Humidity3pm").value,
+    Pressure3pm: document.getElementById("p_Pressure3pm").value,
+    WindGustSpeed: document.getElementById("p_WindGustSpeed").value,
+    RainToday: document.getElementById("p_RainToday").value,
+    Location: document.getElementById("p_Location").value,
+  };
+  const res = await fetch(`${API}/predict`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  const d = await res.json();
+  const box = document.getElementById("predictResult");
+  const willRain = d.prediction === "Yes";
+  box.className = "result " + (willRain ? "rain" : "norain");
+  box.innerHTML = `Prediction: <strong>${d.prediction === "Yes" ? "Rain expected ☔" : "No rain expected ☀️"}</strong>
+    (rain probability: ${d.probability_rain != null ? (d.probability_rain*100).toFixed(1)+"%" : "n/a"},
+    model accuracy: ${(d.model_accuracy*100).toFixed(1)}%)`;
+}
+
+function loadAll() {
+  const loc = document.getElementById("locationSelect").value;
+  loadRainfall(loc);
+  loadTempTrend(loc);
+  loadLocationRain();
+}
+
+loadLocations();
+loadStats();
+loadAll();
+</script>
+</body>
+</html>
